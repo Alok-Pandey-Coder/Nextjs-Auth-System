@@ -5,7 +5,7 @@ export function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname
   const token = request.cookies.get('token');
 
-  const isPublicPath = (path === '/login' || path === '/signup')
+  const isPublicPath = (path === '/login' || path === '/signup' || path === '/verfyemail')
 
 
   if(token && isPublicPath) {
@@ -24,6 +24,7 @@ export const config = {
     '/',
     '/profile',
     '/login',
-    '/signup'
+    '/signup',
+    '/verifyemail'
   ],
 }
