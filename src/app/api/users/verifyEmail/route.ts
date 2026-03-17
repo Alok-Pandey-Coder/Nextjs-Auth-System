@@ -1,35 +1,74 @@
 import { connect } from "@/db/dbconfig";
 import { NextRequest, NextResponse } from "next/server";
 import User from "@/models/userModel";
-import { error } from "console";
+import { z } from "zod"
 
-connect();
+const verifyEmailSchema = z.object({
+  token: z.string().min(1, "Token is required"),
+})
 
-export async function POST(request: NextResponse) {
+type verifyEmailType = z.infer<typeof verifyEmailSchema>
+
+export async function POST(request: NextRequest) {
+
   try {
-    const reqBody = await request.json()
-    const {token} = reqBody;
-    console.log(token);
+    await connect();
+  } catch (err) {
 
-    const user = await User.findOne({verifyToken: token,
-      verifyTokenExpiry: {$gt: Date.now()}
+    console.error("[verifyEmail] DB connection failed:", err)
+    return NextResponse.json(
+      { error: "Service temporarily unavailable. Please try again later." },
+      { status: 503 }
+    )
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON in request body." },
+      { status: 400 } 
+    )
+  }
+
+
+  const parsed = verifyEmailSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed.", issues: parsed.error.flatten().fieldErrors },
+      { status: 422 }
+    )
+  }
+
+  const { token }: verifyEmailType = parsed.data 
+
+  try {
+    const user = await User.findOne({
+      verifyToken: token,
+      verifyTokenExpiry: { $gt: Date.now() }
     })
 
-    if(!user) {
-      return NextResponse.json({error: "Invalid token"}, {status: 400})
+    if (!user) {
+      return NextResponse.json({ error: "Invalid or expired verification token." }, { status: 401 })
     }
 
     user.isVerified = true;
-    user.verifyToken = undefined,
-    user.verifyTokenExpiry = undefined
+    user.verifyToken = undefined;    
+    user.verifyTokenExpiry = undefined;
 
     await user.save();
-    return NextResponse.json({
-      message: "Email verified successfully",
-      success: true
-    })
 
-  } catch (error: any) {
-    return NextResponse.json({error: error.message}, {status: 500})
+    return NextResponse.json(
+      { message: "Email verified successfully.", success: true },
+      { status: 200 }
+    )
+
+  } catch (err) {
+    console.error("[verifyEmail] Unexpected error:", err)
+    return NextResponse.json(
+      { error: "An unexpected error occurred. Please try again later." },
+      { status: 500 }
+    )
   }
 }

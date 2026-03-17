@@ -1,54 +1,122 @@
-import {connect} from "@/db/dbconfig"
-import { NextResponse, NextRequest } from "next/server"
+import { NextResponse, NextRequest } from "next/server";
+import { connect } from "@/db/dbconfig";
 import User from "@/models/userModel";
 import bcrypt from "bcryptjs";
-import toast from "react-hot-toast";
-import jwt from "jsonwebtoken"
+import jwt from "jsonwebtoken";
+import { z } from "zod";
 
-connect();
+const loginSchema = z.object({
+  email: z.string().email("It Must be a valid email").toLowerCase().trim(),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(72, "Password must be at most 72 characters"),
+});
+
+type loginInput = z.infer<typeof loginSchema>;
+
+function sanitizeUser(user: { _id: unknown; username: string; email: string }) {
+  return {
+    id: user._id,
+    username: user.username,
+    email: user.email,
+  };
+}
+
+const GENERIC_AUTH_ERROR = "Invalid email or password.";
 
 export async function POST(request: NextRequest) {
   try {
-    const reqBody = await request.json();
-    const {email, password} = reqBody
+    await connect();
+  } catch (err) {
+    console.error("[login] DB connection failed:", err);
+    return NextResponse.json(
+      { error: "Service temporarily unavailable. Please try again later." },
+      { status: 503 },
+    );
+  }
 
-    const user = await User.findOne({email});
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON in request body." },
+      { status: 400 },
+    );
+  }
 
-    if(!user) {
-      return NextResponse.json({
-        error: "User not found",
-        status: 404,
-      })
+  const parsed = loginSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: "Validation failed.",
+        issues: parsed.error.flatten().fieldErrors,
+      },
+      { status: 422 },
+    );
+  }
+
+  const { email, password }: loginInput = parsed.data;
+
+  const TOKEN_SECRET = process.env.TOKEN_SECRET;
+  if (!TOKEN_SECRET) {
+    console.error("[login] TOKEN_SECRET environment variable is not set.");
+    return NextResponse.json(
+      { error: "Server configuration error." },
+      { status: 500 },
+    );
+  }
+
+  try {
+    const user = await User.findOne({ email }).select(
+      "password username email _id",
+    );
+
+    // this entire block is missing from your file — add it back
+    if (!user) {
+      await bcrypt.compare(
+        password,
+        "$2b$12$dummyhashfortimingprotectiononly000000000000000000000",
+      );
+      return NextResponse.json({ error: GENERIC_AUTH_ERROR }, { status: 401 });
     }
 
-    const validPassword = await bcrypt.compare(password, user.password)
+    const validPassword = await bcrypt.compare(password, user.password);
 
-    if(!validPassword) {
-      return NextResponse.json({
-        error: "Password is invalid",
-        status: 400
-      })
+    if (!validPassword) {
+      return NextResponse.json({ error: GENERIC_AUTH_ERROR }, { status: 401 });
     }
 
     const tokenData = {
-      _id: user._id,
+      sub: user._id.toString(),
       username: user.username,
-      email: email.username,
-    }
+      email: user.email,
+    };
 
-    const token = await jwt.sign(tokenData, process.env.TOKEN_SECRET!, {expiresIn: "1d"})
+    const token = jwt.sign(tokenData, TOKEN_SECRET, {
+      expiresIn: "1d",
+      algorithm: "HS256",
+    });
 
-    const response = NextResponse.json({
-      message: "Login successfull",
-      status: 200,
-      success: true,
-    })
-
-    response.cookies.set("token", token, {httpOnly: true})
+    const response = NextResponse.json(
+      {
+        message: "Login successful.",
+        success: true,
+        user: sanitizeUser(user),
+      },
+      { status: 200 },
+    );
+    response.cookies.set("token", token, {
+      httpOnly: true,
+    });
 
     return response;
-  } catch (error: any) {
-    console.log("Login failed", error.message);
-    
+  } catch (err) {
+    console.error("[login] Unexpected error:", err);
+    return NextResponse.json(
+      { error: "An unexpected error occurred. Please try again later." },
+      { status: 500 },
+    );
   }
 }

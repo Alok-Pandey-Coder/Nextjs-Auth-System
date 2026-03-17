@@ -1,22 +1,27 @@
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function POST() {
   try {
     const response = NextResponse.json({
-      message: "Login successfully",
+      message: "Logged out successfully.",
       success: true,
-      status: 200,
-    });
+    }, { status: 200 }) 
 
-    response.cookies.set("token", "",  {httpOnly: true, expires: new Date(0)});
+
+    response.cookies.set("token", "", {
+      httpOnly: true,
+      expires: new Date(0),                         
+    })
+
     return response;
 
-  } catch (error: any) {
-    console.log("error occurred during logout", error);
-    return NextResponse.json({
-      error: "Error occured",
-      success: false,
-      status: 400
-    })
+  } catch (err) {
+
+    console.error("[logout] Error occurred during logout:", err);
+
+    return NextResponse.json(
+      { error: "An error occurred during logout.", success: false },
+      { status: 500 }
+    )
   }
 }
